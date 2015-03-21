@@ -3,11 +3,13 @@ package com.xanadudevelopers.app.bluetooth;
 import android.app.DialogFragment;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -17,12 +19,14 @@ import android.widget.Button;
 import android.widget.ListView;
 import android.widget.TextView;
 
+import java.io.IOException;
 import java.util.Set;
+import java.util.UUID;
 
 public class BluetoothDialogFragment extends DialogFragment {
     int mNum;
 
-    BluetoothAdapter mBluetoothAdapter;
+    private BluetoothAdapter mBluetoothAdapter;
 
     /**
      * Create a new instance of MyDialogFragment, providing "num"
@@ -74,10 +78,13 @@ public class BluetoothDialogFragment extends DialogFragment {
         ((TextView)tv).setText("Dialog #" + mNum);
 
         // Discover button
-        Button button = (Button)v.findViewById(R.id.discover);
+        Button button = (Button)v.findViewById(R.id.button);
         button.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
-                startDiscovery();
+                if (isDiscovering)
+                    stopDiscovery();
+                else
+                    startDiscovery();
             }
         });
 
@@ -86,13 +93,7 @@ public class BluetoothDialogFragment extends DialogFragment {
                 new BluetoothDeviceArrayAdapter(getActivity(), R.layout.list_item_bluetooth_device);
         ListView deviceList = (ListView) v.findViewById(R.id.device_list);
         deviceList.setAdapter(mArrayAdapter);
-        deviceList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
-            @Override
-            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-                BluetoothDevice device = (BluetoothDevice) parent.getAdapter().getItem(position);
-                ((MainActivity) getActivity()).makeShortToast(device.getAddress());
-            }
-        });
+        deviceList.setOnItemClickListener(mClickListener);
 
         // Get Bluetooth paired devices
         mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
@@ -117,47 +118,62 @@ public class BluetoothDialogFragment extends DialogFragment {
 
     // try to find any available bluetooth devices
     private void startDiscovery() {
-        isDiscovering = true;
+        Log.v("discovery", "Start Discovery");
 
-        // Register the BroadcastReceiver
-        ((MainActivity) getActivity()).makeShortToast("Finding Bluetooth devices in discovery mode.");
+        if (!isDiscovering) {
+            isDiscovering = true;
 
-        // Set up Bluetooth Device ListView
-        final ArrayAdapter<BluetoothDevice> mArrayAdapter =
-                new BluetoothDeviceArrayAdapter(getActivity(), R.layout.list_item_bluetooth_device);
-        ListView deviceList = (ListView) getView().findViewById(R.id.new_device_list);
-        deviceList.setAdapter(mArrayAdapter);
-        deviceList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
-            @Override
-            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-                BluetoothDevice device = (BluetoothDevice) parent.getAdapter().getItem(position);
-                ((MainActivity) getActivity()).makeShortToast(device.getAddress());
-                stopDiscovery();
-            }
-        });
+            // change button text
+            Button button = (Button) getView().findViewById(R.id.button);
+            button.setText("Stop Discovery");
 
-        // Create a BroadcastReceiver for ACTION_FOUND
-        IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
-        bluetoothDiscoveryReceiver = new BroadcastReceiver() {
-            public void onReceive(Context context, Intent intent) {
-                String action = intent.getAction();
-                // When discovery finds a device
-                if (BluetoothDevice.ACTION_FOUND.equals(action)) {
-                    // Get the BluetoothDevice object from the Intent
-                    BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                    // Add the name and address to an array adapter to show in a ListView
-                    mArrayAdapter.add(device);
+            // Register the BroadcastReceiver
+            ((MainActivity) getActivity()).makeShortToast("Finding Bluetooth devices in discovery mode.");
+
+            // Set up Bluetooth Device ListView
+            final ArrayAdapter<BluetoothDevice> mNewDevicesArrayAdapter =
+                    new BluetoothDeviceArrayAdapter(getActivity(), R.layout.list_item_bluetooth_device);
+            ListView deviceList = (ListView) getView().findViewById(R.id.new_device_list);
+            deviceList.setAdapter(mNewDevicesArrayAdapter);
+            deviceList.setOnItemClickListener(mClickListener);
+
+            // Create a BroadcastReceiver for ACTION_FOUND
+            IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
+            bluetoothDiscoveryReceiver = new BroadcastReceiver() {
+                public void onReceive(Context context, Intent intent) {
+                    String action = intent.getAction();
+                    // When discovery finds a device
+                    if (BluetoothDevice.ACTION_FOUND.equals(action)) {
+                        // Get the BluetoothDevice object from the Intent
+                        BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                        // Add the name and address to an array adapter to show in a ListView
+                        // If it's already paired, skip it, because it's been listed already
+                        if (device.getBondState() != BluetoothDevice.BOND_BONDED) {
+                            mNewDevicesArrayAdapter.add(device);
+                        }
+                    } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
+                        stopDiscovery();
+                        if (mNewDevicesArrayAdapter.getCount() == 0) {
+                            ((MainActivity) getActivity()).makeShortToast("No New Devices Found");
+                        }
+                    }
                 }
-            }
-        };
-        getActivity().registerReceiver(bluetoothDiscoveryReceiver, filter); // Don't forget to unregister during onDestroy
+            };
+            getActivity().registerReceiver(bluetoothDiscoveryReceiver, filter); // Don't forget to unregister during onDestroy
 
-        mBluetoothAdapter.startDiscovery();
+            mBluetoothAdapter.startDiscovery();
+        }
     }
 
     // stops discovery if it is currently started
     private void stopDiscovery() {
+        Log.v("discovery", "Stop Discovery");
+
         if (isDiscovering) {
+            // change button text
+            Button button = (Button) getView().findViewById(R.id.button);
+            button.setText("Find Unpaired Devices");
+
             isDiscovering = false;
             getActivity().unregisterReceiver(bluetoothDiscoveryReceiver);
             mBluetoothAdapter.cancelDiscovery();
@@ -174,8 +190,18 @@ public class BluetoothDialogFragment extends DialogFragment {
 
     // ----------------------------------------------------------------------------------
     //
+    // BLUETOOTH CONNECTION
+
+    // TODO: Might be a good idea to make both sides both a server and a client
+    // TODO: might be a good idea to use BLE when not plugged in, and only full B w/ extra features when plugged in
+
+
+
+    // ----------------------------------------------------------------------------------
+    //
     // PRIVATE CLASSES/METHODS
 
+    // the 'styling' for the list view
     private class BluetoothDeviceArrayAdapter extends ArrayAdapter<BluetoothDevice> {
         public BluetoothDeviceArrayAdapter(Context context, int resource) {
             super(context, resource);
@@ -183,8 +209,6 @@ public class BluetoothDialogFragment extends DialogFragment {
 
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
-            // Get the data item for this position
-            BluetoothDevice device = getItem(position);
             // Check if an existing view is being reused, otherwise inflate the view
             if (convertView == null) {
                 convertView = LayoutInflater.from(getContext())
@@ -193,10 +217,28 @@ public class BluetoothDialogFragment extends DialogFragment {
 
             // Lookup view for data population
             TextView textView = (TextView) convertView.findViewById(R.id.text1);
+
+            // Get the data item for this position
+            BluetoothDevice device = getItem(position);
             // Populate the data into the template view using the data object
             textView.setText(device.getName() + "\n" + device.getAddress());
             // Return the completed view to render on screen
             return convertView;
         }
     }
+
+
+    private AdapterView.OnItemClickListener mClickListener = new AdapterView.OnItemClickListener() {
+        @Override
+        public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+            BluetoothDevice device = (BluetoothDevice) parent.getAdapter().getItem(position);
+            Log.v("dialog", "Clicked on " + device.getAddress());
+
+            // try to connect to the device
+            ((MainActivity) getActivity()).connect(device);
+            stopDiscovery();
+
+            dismiss();
+        }
+    };
 }

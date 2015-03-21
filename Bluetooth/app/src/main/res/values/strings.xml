@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="uuid">1c62e15c-cf83-11e4-b9d6-1681e6b88ec1</string>
 
     <string name="app_name">Bluetooth</string>
     <string name="action_settings">Settings</string>
